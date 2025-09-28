@@ -1,0 +1,57 @@
+services:
+  comfyui:
+    build:
+      context: .
+      dockerfile: Dockerfile.comfyui
+    image: comfyui-rtx5090:latest
+    container_name: comfyui-rtx5090
+    restart: unless-stopped
+    ports:
+      - "8188:8188"
+    volumes:
+      - ./models/comfyui:/workspace/comfyui/models:rw
+      - ./custom_nodes:/workspace/comfyui/custom_nodes:rw
+      - ./config/comfyui:/workspace/comfyui/config:rw
+      - ./logs/comfyui:/workspace/comfyui/logs:rw
+      - ./outputs/comfyui:/workspace/comfyui/output:rw
+    user: "1001:1001"
+    environment:
+      - DEBIAN_FRONTEND=noninteractive
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - CUDA_VISIBLE_DEVICES=0
+      # - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:1024
+
+      # 🔑 The big one: allocator tuned to *return memory* and reduce fragmentation
+      - PYTORCH_CUDA_ALLOC_CONF=backend:cudaMallocAsync,expandable_segments:True,garbage_collection_threshold:0.6,max_split_size_mb:128
+
+      # Load CUDA kernels lazily to reduce up-front VRAM use
+      - CUDA_MODULE_LOADING=LAZY
+
+
+      - TF_FORCE_GPU_ALLOW_GROWTH=true
+      - CUDA_LAUNCH_BLOCKING=0
+      - TORCH_CUDNN_V8_API_ENABLED=1
+      - HOME=/workspace
+      - PIP_CACHE_DIR=/workspace/.cache/pip
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+        limits:
+          memory: 30G
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8188"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  comfyui-models:
+    driver: local
+  comfyui-outputs:
+    driver: local
