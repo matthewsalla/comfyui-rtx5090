@@ -1,114 +1,178 @@
-# ComfyUI + Stable Diffusion for RTX 5090
+# ComfyUI for RTX 5090 (Docker)
 
-This repository contains a Docker-based deployment solution for running ComfyUI and Stable Diffusion WebUI optimized for NVIDIA RTX 5090 GPUs with 32GB VRAM.
+A lean, GPU-optimized ComfyUI stack targeting NVIDIA **RTX 5090 (Blackwell)** with CUDA 12.9.
+This repo gives you:
 
-## Features
+* A Docker image for ComfyUI (`Dockerfile.comfyui`) tuned for compute capability 12.0.
+* Optional wheel builders for **flash-attn 2.8.1** and **xFormers 0.0.32.dev1073** on CUDA 12.9
+  (`Dockerfile.flash-attn-wheel`, `Dockerfile.xformers-wheel`).
+* A `docker-compose.yml` with sensible volumes, healthcheck, and port mapping (**8188**).
+* Convenience scripts: `manage.sh` (lifecycle helpers), `download-FLUX.sh` (Flux.1 [dev] bundle),
+  `download-models.sh` (common ComfyUI model folders), and `build-wheels.sh` (setup + wheel build glue).
 
-- Latest CUDA 12.9.1 with pinned PyTorch nightly builds
-- Flash Attention 2.8.1 support (pinned version)
-- xFormers 0.0.32.dev1073 memory-efficient attention (pinned version)
-- WAN 2.2 tagger integration for ComfyUI (pinned to commit hash)
-- Version pinning for all components (ComfyUI, Stable Diffusion WebUI, extensions)
-- Optimized for maximum performance on RTX 5090 GPUs
-- Shared model storage for both ComfyUI and Stable Diffusion
+> ⚠️ Note: Only ComfyUI is included. There is **no Stable Diffusion WebUI service** in this repository.
 
-## Quick Start
+---
 
-1. Clone this repository:
-   ```bash
-   git clone https://github.com/yourusername/comfyui-rtx5090.git
-   cd comfyui-rtx5090
-   ```
+## What’s inside
 
-2. Build the optimized wheels (optional but recommended):
-   ```bash
-   chmod +x build-wheels.sh
-   ./build-wheels.sh
-   ```
-
-3. Start the services:
-   ```bash
-   docker-compose up -d
-   ```
-
-4. Access the interfaces:
-   - ComfyUI: http://localhost:8188
-   - Stable Diffusion WebUI: http://localhost:7860
-
-## Directory Structure
-
-```
+```text
 .
-├── models/
-│   ├── comfyui/           # ComfyUI models
-│   └── stable-diffusion/  # Stable Diffusion models
-├── config/
-│   ├── comfyui/           # ComfyUI configuration
-│   └── stable-diffusion/  # Stable Diffusion configuration
-├── logs/
-│   ├── comfyui/           # ComfyUI logs
-│   └── stable-diffusion/  # Stable Diffusion logs
-├── outputs/
-│   ├── comfyui/           # ComfyUI generated images
-│   └── stable-diffusion/  # Stable Diffusion generated images
-├── custom_nodes/          # ComfyUI custom nodes/extensions
-├── extensions/            # Stable Diffusion extensions
-└── wheelhouse/            # Pre-built optimized wheels
+├─ Dockerfile.comfyui               # ComfyUI base image (CUDA 12.9.1, Ubuntu 24.04)
+├─ Dockerfile.flash-attn-wheel      # (optional) build Flash-Attention 2.8.1 wheel
+├─ Dockerfile.xformers-wheel        # (optional) build xFormers 0.0.32.dev1073 wheel
+├─ docker-compose.yml               # ComfyUI service on :8188 with bind-mounts
+├─ entrypoint-comfyui.sh            # Starts ComfyUI with safe defaults
+├─ download-FLUX.sh                 # Helper to fetch Flux.1 [dev] + extras into models/comfyui
+├─ download-models.sh               # Helper to create/populate common ComfyUI model dirs
+├─ build-wheels.sh                  # Wrapper to create folders and build wheels
+├─ manage.sh                        # Shortcuts (build/up/down/logs/setup) — optional
+├─ LICENSE
+└─ README.md
 ```
 
-## Model Management
+## Requirements
 
-Place your models in the appropriate directories:
+* Linux host with an NVIDIA GPU (tested target: **RTX 5090, 32 GB**).
+* NVIDIA driver compatible with **CUDA 12.9** and the **NVIDIA Container Toolkit** installed.
+* Recent Docker & Docker Compose plugin.
+* (For gated model downloads) Hugging Face token: set `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN`.
 
-- Stable Diffusion models: `models/stable-diffusion/Stable-diffusion/`
-- VAE models: `models/stable-diffusion/VAE/`
-- LoRA models: `models/stable-diffusion/Lora/`
-- Embeddings: `models/stable-diffusion/embeddings/`
+## Quick start
 
-For ComfyUI:
-- Checkpoints: `models/comfyui/checkpoints/`
-- LoRAs: `models/comfyui/loras/`
-- VAEs: `models/comfyui/vae/`
-- Controlnet: `models/comfyui/controlnet/`
+1. **Create folders** (if you don’t use `manage.sh setup`):
 
-## Implementation Details
+```bash
+mkdir -p models/comfyui custom_nodes config/comfyui logs/comfyui outputs/comfyui
+```
 
-### Chunk 1: ComfyUI and Stable Diffusion Deployment
+2. **(Optional) Download Flux.1 [dev] & friends** into the right ComfyUI folders:
 
-The current implementation includes:
-- Optimized Docker containers for both ComfyUI and Stable Diffusion
-- Pre-built wheels for Flash Attention 2.8.1 and xFormers 0.0.32.dev1073
-- Version pinning for all components (ComfyUI, Stable Diffusion WebUI, PyTorch)
-- Shared volume mounts for models and outputs
+```bash
+export HF_TOKEN=hf_xxx    # required for gated BFL repos
+./download-FLUX.sh
+```
 
-### Chunk 2: WAN 2.2 Integration
+3. **Build and run**:
 
-WAN 2.2 is integrated as a custom node in ComfyUI. It's automatically installed during container startup.
+```bash
+docker compose build
+docker compose up -d
+```
 
-### Chunk 3: Performance Optimizations
+Then open **[http://localhost:8188](http://localhost:8188)** (or the host IP) for ComfyUI.
 
-- Flash Attention 2 for faster attention computation
-- xFormers for memory-efficient attention
-- PyTorch nightly builds with CUDA 12.9.1 support
-- High VRAM utilization settings for 32GB GPUs
+4. **Tail logs / stop**:
+
+```bash
+docker compose logs -f comfyui
+docker compose down
+```
+
+## Volumes & paths
+
+The Compose file bind-mounts the following to ComfyUI’s workdir (`/workspace/comfyui`):
+
+* `./models/comfyui` → `/workspace/comfyui/models`
+* `./custom_nodes`   → `/workspace/comfyui/custom_nodes`
+* `./config/comfyui` → `/workspace/comfyui/config`
+* `./logs/comfyui`   → `/workspace/comfyui/logs`
+* `./outputs/comfyui`→ `/workspace/comfyui/output`
+
+Place your models according to **ComfyUI’s standard layout**, for example:
+
+```text
+models/comfyui/
+├─ checkpoints/            # .safetensors, .ckpt
+├─ clip/
+├─ clip_vision/
+├─ controlnet/
+├─ ipadapter/
+├─ loras/
+├─ upscale_models/
+├─ vae/
+└─ (etc. per ComfyUI conventions)
+```
+
+The included `download-FLUX.sh` will create the correct subfolders for Flux.1 [dev] pipelines (diffusion, text_encoders, vae, checkpoints, etc.).
+
+## GPU configuration
+
+The image sets `TORCH_CUDA_ARCH_LIST=12.0` for Blackwell. Make sure Docker is allowed to access your GPU.
+If your Compose engine doesn’t auto-detect GPUs, add one of the following to the `comfyui` service:
+
+**Compose v2 GPU flag:**
+
+```yaml
+deploy:
+  resources:
+    reservations:
+      devices:
+        - capabilities: ["gpu"]
+```
+
+**Or the older syntax:**
+
+```yaml
+runtime: nvidia
+environment:
+  - NVIDIA_VISIBLE_DEVICES=all
+```
+
+> Your `docker-compose.yml` already maps port **8188** and includes a simple HTTP healthcheck.
+
+## Optional: build flash-attn / xFormers wheels
+
+For maximum control you can prebuild wheels matched to the CUDA/PyTorch used in the image:
+
+```bash
+# Flash-Attention
+docker build -f Dockerfile.flash-attn-wheel -t flashattn-cu129 .
+CID=$(docker create flashattn-cu129)
+mkdir -p wheels/flash-attn && docker cp "$CID":/wheelhouse ./wheels/flash-attn && docker rm "$CID"
+
+# xFormers
+docker build -f Dockerfile.xformers-wheel -t xformers-cu129 .
+CID=$(docker create xformers-cu129)
+mkdir -p wheels/xformers && docker cp "$CID":/wheelhouse ./wheels/xformers && docker rm "$CID"
+```
+
+To use these, either rebuild your ComfyUI image and `pip install` the wheels inside the Dockerfile,
+or exec into a running container and install them:
+
+```bash
+docker compose exec comfyui bash -lc "pip install /workspace/wheels/flash-attn/*.whl /workspace/wheels/xformers/*.whl"
+```
+
+(You can mount `./wheels` into the container by adding another bind-mount in `docker-compose.yml`.)
+
+## Convenience script (optional)
+
+A small helper is provided to streamline common actions:
+
+```bash
+./manage.sh setup     # create folders
+./manage.sh build     # docker compose build
+./manage.sh up        # docker compose up -d
+./manage.sh down      # docker compose down
+./manage.sh logs      # tail ComfyUI logs
+```
+
+> If any of these subcommands are missing on your copy, just use the equivalent `docker compose …` commands above.
+
+## Updating
+
+* Pull the latest repo changes.
+* Rebuild the image: `docker compose build --no-cache`.
+* Restart: `docker compose up -d`.
 
 ## Troubleshooting
 
-If you encounter issues:
-
-1. Check the logs:
-   ```bash
-   docker-compose logs -f comfyui
-   docker-compose logs -f stable-diffusion
-   ```
-
-2. Ensure your NVIDIA drivers are up to date and support CUDA 12.9
-
-3. If the containers fail to start, try rebuilding them:
-   ```bash
-   docker-compose build --no-cache
-   ```
+* **Container can’t see the GPU** → verify NVIDIA drivers, the NVIDIA Container Toolkit, and that Compose is configured to pass the GPU through (see *GPU configuration* above).
+* **Model not found / wrong folder** → confirm the file is under the correct `models/comfyui/**` subfolder name used by your ComfyUI node.
+* **Out-of-memory** → try lower-VRAM workflows, disable high-VRAM nodes, or reduce image sizes/batch counts.
+* **Slow first run** → the image may compile kernels on first use; subsequent runs are faster.
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+MIT — see `LICENSE`.
