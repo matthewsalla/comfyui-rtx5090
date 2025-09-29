@@ -41,7 +41,8 @@ extract_wheel(){
   local pattern=$2
   mkdir -p wheelhouse
   local cmd='shopt -s nullglob; files=(/wheelhouse/'"${pattern}"'); if [ ${#files[@]} -eq 0 ]; then echo "No matching files for ${pattern}"; else cp -t /output "${files[@]}"; fi'
-  docker run --rm -v "${PWD}/wheelhouse:/output" "$image" bash -lc "$cmd"
+  local run_user="$(id -u):$(id -g)"
+  docker run --rm --user "$run_user" -v "${PWD}/wheelhouse:/output" "$image" bash -lc "$cmd"
 }
 
 
@@ -69,21 +70,27 @@ main(){
     flash_args+=(--build-arg "FLASH_ATTN_VERSION=${flash_attn_version}")
   fi
 
-  info "Building flash-attn wheel image"
-  build_image Dockerfile.flash-attn-wheel flash-attn-builder \
-    "$torch_channel" "$torch_version" "$torchvision_version" "$torchaudio_version" \
-    "${flash_args[@]}"
+  # info "Building flash-attn wheel image"
+  # build_image Dockerfile.flash-attn-wheel flash-attn-builder \
+  #   "$torch_channel" "$torch_version" "$torchvision_version" "$torchaudio_version" \
+  #   "${flash_args[@]}"
 
-  info "Building xformers wheel image"
-  build_image Dockerfile.xformers-wheel xformers-builder \
-    "$torch_channel" "$torch_version" "$torchvision_version" "$torchaudio_version" \
-    --build-arg "XFORMERS_VERSION=${xformers_version}" \
-    --build-arg "XFORMERS_REPO=${xformers_repo}" \
-    --build-arg "XFORMERS_REF=${xformers_ref}"
+  # info "Building xformers wheel image"
+  # build_image Dockerfile.xformers-wheel xformers-builder \
+  #   "$torch_channel" "$torch_version" "$torchvision_version" "$torchaudio_version" \
+  #   --build-arg "XFORMERS_VERSION=${xformers_version}" \
+  #   --build-arg "XFORMERS_REPO=${xformers_repo}" \
+  #   --build-arg "XFORMERS_REF=${xformers_ref}"
 
   info "Extracting wheels"
   extract_wheel flash-attn-builder "flash_attn*.whl"
   extract_wheel xformers-builder "xformers*.whl"
+
+  if command -v chown >/dev/null 2>&1; then
+    if ! chown -R "$(id -u):$(id -g)" wheelhouse 2>/dev/null; then
+      warn "Could not adjust wheelhouse ownership; run: sudo chown -R $(id -u):$(id -g) wheelhouse"
+    fi
+  fi
 
   ok "Wheels ready under wheelhouse/"
 }
