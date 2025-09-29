@@ -11,7 +11,6 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH \
     TORCH_CUDNN_V8_API_ENABLED=1 \
     TORCH_CUDNN_V8_API_DISABLED=0 \
-    PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:1024 \
     TF_FORCE_GPU_ALLOW_GROWTH=true
 
 # --- OS prerequisites --------------------------------------------------------
@@ -28,15 +27,29 @@ RUN python3 -m venv /opt/venv && \
     chmod -R 777 /opt/venv
 ENV PATH=/opt/venv/bin:$PATH
 
-# --- Core Python stack (PyTorch nightly cu129) -------------------------------
-# Pin PyTorch to specific nightly build with date
-ARG PYTORCH_VERSION_DATE=$(date +"%Y%m%d")
-ENV PYTORCH_VERSION_DATE=${PYTORCH_VERSION_DATE}
+# --- Core Python stack (PyTorch cu129) --------------------------------------
+# By default install the latest nightly. Provide TORCH_VERSION / TORCHVISION_VERSION /
+# TORCHAUDIO_VERSION build args to pin specific wheels when needed.
+ARG TORCH_CHANNEL="https://download.pytorch.org/whl/nightly/cu129"
+ARG TORCH_VERSION=""
+ARG TORCHVISION_VERSION=""
+ARG TORCHAUDIO_VERSION=""
 
-RUN pip install --upgrade pip wheel setuptools \
- && pip install --pre torch torchvision torchaudio \
-        --index-url https://download.pytorch.org/whl/nightly/cu129 \
- && echo "PyTorch nightly-${PYTORCH_VERSION_DATE}" > /pytorch-version.txt
+RUN set -eux; \
+    pip install --upgrade pip wheel setuptools; \
+    TORCH_SPEC="torch${TORCH_VERSION:+==${TORCH_VERSION}}"; \
+    TORCHVISION_SPEC="torchvision${TORCHVISION_VERSION:+==${TORCHVISION_VERSION}}"; \
+    TORCHAUDIO_SPEC="torchaudio${TORCHAUDIO_VERSION:+==${TORCHAUDIO_VERSION}}"; \
+    pip install --no-cache-dir --index-url "${TORCH_CHANNEL}" "${TORCH_SPEC}"; \
+    pip install --no-cache-dir --index-url "${TORCH_CHANNEL}" "${TORCHVISION_SPEC}" "${TORCHAUDIO_SPEC}"; \
+    python - <<'PY'
+import pathlib
+import torch, torchvision, torchaudio
+print('Torch wheel:', torch.__version__)
+print('TorchVision wheel:', torchvision.__version__)
+print('TorchAudio wheel:', torchaudio.__version__)
+pathlib.Path('/pytorch-version.txt').write_text(f"torch=={torch.__version__}\n", encoding='utf-8')
+PY
 
 # --- Install required dependencies first ---
 RUN pip install einops ninja cmake packaging wheel
@@ -70,18 +83,14 @@ RUN pip install --no-cache-dir \
       "transformers>=4.42" huggingface_hub gradio_client \
       fastapi uvicorn[standard] pydantic orjson
 
-# --- App user & ComfyUI ---
-RUN groupadd -g 1001 appgroup || true && \
-    useradd -m -s /bin/bash -u 1001 -g 1001 odin || true && \
+# --- App user ---
+RUN groupadd -r appgroup && \
+    useradd -m -r -s /bin/bash -u 1001 -g appgroup odin && \
     mkdir -p /workspace && \
     chown -R odin:appgroup /workspace
+
 USER odin
 WORKDIR /workspace
-RUN git clone https://github.com/comfyanonymous/ComfyUI.git comfyui
-WORKDIR /workspace/comfyui
-
-# --- Install ComfyUI dependencies ---
-RUN pip install -r requirements.txt
 
 # --- Entrypoint script ---
 USER root

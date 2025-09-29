@@ -17,17 +17,22 @@ ENV PATH=/opt/venv/bin:$PATH \
 # Upgrade pip and install build tools
 RUN pip install --upgrade pip wheel setuptools
 
-# Install PyTorch nightly (same version as runtime)
-RUN pip install --index-url https://download.pytorch.org/whl/nightly/cu129 torch torchvision torchaudio
+# Reuse runtime torch channel/version for ABI compatibility
+ARG TORCH_CHANNEL="https://download.pytorch.org/whl/nightly/cu129"
+ARG TORCH_VERSION=""
+ARG TORCHVISION_VERSION=""
+ARG TORCHAUDIO_VERSION=""
+RUN set -eux; \
+    TORCH_SPEC="torch${TORCH_VERSION:+==${TORCH_VERSION}}"; \
+    TORCHVISION_SPEC="torchvision${TORCHVISION_VERSION:+==${TORCHVISION_VERSION}}"; \
+    TORCHAUDIO_SPEC="torchaudio${TORCHAUDIO_VERSION:+==${TORCHAUDIO_VERSION}}"; \
+    pip install --no-cache-dir --index-url "${TORCH_CHANNEL}" "${TORCH_SPEC}"; \
+    pip install --no-cache-dir --index-url "${TORCH_CHANNEL}" "${TORCHVISION_SPEC}" "${TORCHAUDIO_SPEC}"; \
+    pip install einops packaging
 
-# Install required dependencies for Flash Attention
-RUN pip install einops packaging
-
-# Verify PyTorch version
-RUN python3 -c "import torch; print('PyTorch version:', torch.__version__)"
-
-# Build Flash Attention wheel with PyTorch nightly (force from source)
-RUN pip wheel --no-binary=:all: --no-deps --no-build-isolation --no-cache-dir flash-attn==2.8.1 -w /wheelhouse
+# Build Flash Attention wheel (default 2.8.1)
+ARG FLASH_ATTN_VERSION="2.8.1"
+RUN pip wheel --no-binary=:all: --no-deps --no-build-isolation --no-cache-dir flash-attn==${FLASH_ATTN_VERSION} -w /wheelhouse
 
 # List the built wheel
 RUN ls -la /wheelhouse/
