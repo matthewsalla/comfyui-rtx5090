@@ -1,177 +1,184 @@
 # ComfyUI for RTX 5090 (Docker)
 
-A lean, GPU-optimized ComfyUI stack targeting NVIDIA **RTX 5090 (Blackwell)** with CUDA 12.9.
-This repo gives you:
+A lean, reproducible ComfyUI stack tuned for NVIDIA RTX 5090 (Blackwell) with CUDA 12.9. The repo focuses on orchestration: the container stays generic while all mutable state (code, models, caches, outputs) lives in a bind-mounted `workspace/` on the host.
 
-* A Docker image for ComfyUI (`Dockerfile.comfyui`) tuned for compute capability 12.0.
-* Optional wheel builders for **flash-attn 2.8.1** and **xFormers 0.0.32.dev1073** on CUDA 12.9
-  (`Dockerfile.flash-attn-wheel`, `Dockerfile.xformers-wheel`).
-* A `docker-compose.yml` with sensible volumes, healthcheck, and port mapping (**8188**).
-* Convenience scripts: `manage.sh` (lifecycle helpers), `download-FLUX.sh` (Flux.1 [dev] bundle),
-  `download-models.sh` (common ComfyUI model folders), and `build-wheels.sh` (setup + wheel build glue).
+## Highlights
+- **Minimal image** – CUDA 12.9.1, Python 3.12 venv, and PyTorch from the nightly channel by default. Override the exact wheels via build args (`TORCH_VERSION`, `TORCHVISION_VERSION`, `TORCHAUDIO_VERSION`).
+- **Safe entrypoint** – clones/updates ComfyUI into `/workspace/comfyui`, ensures model/cache folders exist, and lets you append extra launch flags with `COMFYUI_ARGS`.
+- **Flexible tuning** – toggle allocator knobs such as `PYTORCH_CUDA_ALLOC_CONF` or runtime flags without editing the image; just set values in `.env`.
+- **Optional wheel builders** – reproducible Dockerfiles + `build-wheels.sh` to compile flash-attn / xFormers wheels that match the exact torch build you ship.
+- **Helper workflow** – `manage.sh` handles `.env` defaults, workspace creation/ownership, builds, starts, logs, etc.
 
-> ⚠️ Note: Only ComfyUI is included. There is **no Stable Diffusion WebUI service** in this repository.
+> Only ComfyUI is provided. There is no Stable Diffusion WebUI or other front-ends bundled.
 
 ---
 
-## What’s inside
+## Repo layout
 
-```text
+```
 .
-├─ Dockerfile.comfyui               # ComfyUI base image (CUDA 12.9.1, Ubuntu 24.04)
-├─ Dockerfile.flash-attn-wheel      # (optional) build Flash-Attention 2.8.1 wheel
-├─ Dockerfile.xformers-wheel        # (optional) build xFormers 0.0.32.dev1073 wheel
-├─ docker-compose.yml               # ComfyUI service on :8188 with bind-mounts
-├─ entrypoint-comfyui.sh            # Starts ComfyUI with safe defaults
-├─ download-FLUX.sh                 # Helper to fetch Flux.1 [dev] + extras into models/comfyui
-├─ download-models.sh               # Helper to create/populate common ComfyUI model dirs
-├─ build-wheels.sh                  # Wrapper to create folders and build wheels
-├─ manage.sh                        # Shortcuts (build/up/down/logs/setup) — optional
-├─ LICENSE
+├─ Dockerfile.comfyui               # Runtime image (CUDA 12.9.1, Ubuntu 24.04)
+├─ docker-compose.yml               # Single comfyui service on :8188
+├─ entrypoint-comfyui.sh            # Runtime bootstrap (clone/update + launch)
+├─ manage.sh                        # Lifecycle helper (init/build/start/…)
+├─ build-wheels.sh                  # Builds flash-attn / xformers wheels in wheelhouse/
+├─ Dockerfile.flash-attn-wheel      # Wheel builder (respects torch build args)
+├─ Dockerfile.xformers-wheel        # Wheel builder (respects torch build args)
+├─ download-FLUX.sh                 # Optional Flux.1 [dev] model helper
+├─ download-models.sh               # Optional common-models helper
+├─ wheelhouse/                      # Place prebuilt wheels here (optional)
+├─ workspace/                       # Bind-mounted working tree (created on demand)
 └─ README.md
 ```
 
-## Requirements
+---
 
-* Linux host with an NVIDIA GPU (tested target: **RTX 5090, 32 GB**).
-* NVIDIA driver compatible with **CUDA 12.9** and the **NVIDIA Container Toolkit** installed.
-* Recent Docker & Docker Compose plugin.
-* (For gated model downloads) Hugging Face token: set `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN`.
+## Prerequisites
+- Linux host with an NVIDIA GPU (targeting RTX 5090, 32 GB VRAM).
+- NVIDIA driver + NVIDIA Container Toolkit compatible with CUDA 12.9.
+- Docker Engine 24+ with the Compose plugin.
+- (For gated models) Hugging Face token (`HF_TOKEN`).
+
+---
 
 ## Quick start
 
-1. **Create folders** (if you don’t use `manage.sh setup`):
+1. **Bootstrap configuration & workspace**
+   ```bash
+   ./manage.sh init     # writes .env, creates workspace/, fixes ownership
+   ```
 
+2. **(Optional) Pre-build GPU wheels**
+   ```bash
+   ./build-wheels.sh    # flashes/xformers wheels land in wheelhouse/
+   ```
+
+3. **Build & start the stack**
+   ```bash
+   ./manage.sh build    # docker compose build (uses .env for build args)
+   ./manage.sh start    # docker compose up -d
+   ./manage.sh logs     # tail ComfyUI logs
+   ./manage.sh doctor   # optional: verify bind mounts are writable
+   ```
+
+4. **Visit the UI** – http://localhost:8188 (or the host IP).
+
+To stop later: `./manage.sh stop`.
+
+---
+
+## Configuring PyTorch / launch flags
+
+`.env` holds all tunables. Defaults look like:
+
+```
+TORCH_CHANNEL=https://download.pytorch.org/whl/nightly/cu129
+TORCH_VERSION=
+TORCHVISION_VERSION=
+TORCHAUDIO_VERSION=
+FLASH_ATTN_VERSION=2.8.1
+XFORMERS_VERSION=
+XFORMERS_REPO=https://github.com/facebookresearch/xformers.git
+XFORMERS_REF=main
+PYTORCH_CUDA_ALLOC_CONF=
+COMFYUI_ARGS=
+```
+
+- Leave the version fields blank to pull the latest nightly wheels.
+- Pin to a particular build by setting, for example:
+  ```
+  TORCH_VERSION=2.9.0.dev20250923+cu129
+  TORCHVISION_VERSION=0.24.0.dev20250923+cu129
+  TORCHAUDIO_VERSION=2.8.0.dev20250923+cu129
+  ```
+  Then rerun `./manage.sh build`.
+- Set `PYTORCH_CUDA_ALLOC_CONF` when you need allocator tweaks (e.g. `backend:cudaMallocAsync,max_split_size_mb:64`).
+- Provide extra CLI flags for ComfyUI with `COMFYUI_ARGS` (e.g. `--highvram --force-fp16`). They are appended ahead of any flags you pass to the container command.
+- Adjust `FLASH_ATTN_VERSION`, `XFORMERS_VERSION`, `XFORMERS_REPO`, or `XFORMERS_REF` if you need to rebuild custom CUDA wheels. Leave `XFORMERS_VERSION` empty to pull from the specified repo/ref (defaults to `main`).
+
+---
+
+## Workspace layout
+
+All ComfyUI data lives under `workspace/` on the host and is bind-mounted into the container. After the first successful start you’ll see:
+
+```
+workspace/
+├─ .cache/{pip,hf,torch,xdg}
+└─ comfyui/
+   ├─ models/
+   │  ├─ checkpoints/
+   │  ├─ clip/
+   │  └─ … (standard ComfyUI subfolders)
+   ├─ custom_nodes/
+   ├─ config/
+   ├─ logs/
+   ├─ output/
+   └─ .version
+```
+
+Drop your models/checkpoints into the respective folders inside `workspace/comfyui/models`. `download-FLUX.sh` and `download-models.sh` can help populate common sets.
+
+`manage.sh doctor` verifies that everything is writable.
+
+---
+
+## Wheel builders (optional)
+
+`build-wheels.sh` compiles flash-attn and xformers in throwaway builder images, using the same torch channel + version pins as the runtime image. The wheels are copied back to `wheelhouse/` as your user (no root-owned artifacts) and are installed automatically during the next `docker compose build` (the Dockerfile checks for wheels before falling back to source builds).
+
+To rebuild wheels after changing torch versions:
 ```bash
-mkdir -p models/comfyui custom_nodes config/comfyui logs/comfyui outputs/comfyui
+./build-wheels.sh
+./manage.sh build
 ```
 
-2. **(Optional) Download Flux.1 [dev] & friends** into the right ComfyUI folders:
+Control the wheel builders through `.env`:
 
-```bash
-export HF_TOKEN=hf_xxx    # required for gated BFL repos
-./download-FLUX.sh
+```
+FLASH_ATTN_VERSION=2.8.1              # set empty to use upstream default build logic
+XFORMERS_VERSION=                     # blank → build from XFORMERS_REPO@XFORMERS_REF
+XFORMERS_REPO=https://github.com/facebookresearch/xformers.git
+XFORMERS_REF=main
 ```
 
-3. **Build and run**:
+If `XFORMERS_VERSION` is blank, the builder compiles directly from the repo/ref. Set it to a published version (e.g. `0.0.33.dev20250901+cu129`) to build that exact wheel.
 
-```bash
-docker compose build
-docker compose up -d
+After running `./build-wheels.sh`, rebuild and restart the runtime image so the new wheels are baked in:
+
+```
+./manage.sh build
+./manage.sh start
+./manage.sh logs   # confirm torch/xformers versions at launch
 ```
 
-Then open **[http://localhost:8188](http://localhost:8188)** (or the host IP) for ComfyUI.
+---
 
-4. **Tail logs / stop**:
+## Helper commands (`manage.sh`)
 
-```bash
-docker compose logs -f comfyui
-docker compose down
+```
+Usage: ./manage.sh {init|doctor|setup|build|start|stop|restart|status|logs|update|help}
 ```
 
-## Volumes & paths
+- `init` – ensure `.env`, create `workspace/`, fix ownership/permissions.
+- `build` – `docker compose build --no-cache` (picks up torch args, wheelhouse, etc.).
+- `start` / `stop` / `restart` – lifecycle controls.
+- `logs` – follow container logs.
+- `doctor` – check that bind mounts are writable.
+- `update` – `git pull` the ComfyUI repo inside the container.
 
-The Compose file bind-mounts the following to ComfyUI’s workdir (`/workspace/comfyui`):
+You can always fall back to the raw `docker compose` commands if you prefer.
 
-* `./models/comfyui` → `/workspace/comfyui/models`
-* `./custom_nodes`   → `/workspace/comfyui/custom_nodes`
-* `./config/comfyui` → `/workspace/comfyui/config`
-* `./logs/comfyui`   → `/workspace/comfyui/logs`
-* `./outputs/comfyui`→ `/workspace/comfyui/output`
+---
 
-Place your models according to **ComfyUI’s standard layout**, for example:
+## Troubleshooting tips
 
-```text
-models/comfyui/
-├─ checkpoints/            # .safetensors, .ckpt
-├─ clip/
-├─ clip_vision/
-├─ controlnet/
-├─ ipadapter/
-├─ loras/
-├─ upscale_models/
-├─ vae/
-└─ (etc. per ComfyUI conventions)
-```
+- **`std::bad_alloc` on startup** – try adjusting `PYTORCH_CUDA_ALLOC_CONF` (e.g. reduce `max_split_size_mb`) or temporarily pin Torch to a known-good build. Use `nvidia-smi -l` while starting to watch VRAM spikes.
+- **Permission denied under /workspace** – run `./manage.sh doctor`. If still failing, `sudo chown -R $(id -u):$(id -g) workspace` and start again.
+- **Slow dependency installs each boot** – the entrypoint performs a best-effort `pip install -r requirements.txt`. If you prefer frozen deps, bake them into the image or manage a venv inside `workspace/`.
+- **Wheel ABI mismatch** – regenerate wheels after changing torch versions so flash-attn/xformers match the pinned torch build.
 
-The included `download-FLUX.sh` will create the correct subfolders for Flux.1 [dev] pipelines (diffusion, text_encoders, vae, checkpoints, etc.).
-
-## GPU configuration
-
-The image sets `TORCH_CUDA_ARCH_LIST=12.0` for Blackwell. Make sure Docker is allowed to access your GPU.
-If your Compose engine doesn’t auto-detect GPUs, add one of the following to the `comfyui` service:
-
-**Compose v2 GPU flag:**
-
-```yaml
-deploy:
-  resources:
-    reservations:
-      devices:
-        - capabilities: ["gpu"]
-```
-
-**Or the older syntax:**
-
-```yaml
-runtime: nvidia
-environment:
-  - NVIDIA_VISIBLE_DEVICES=all
-```
-
-> Your `docker-compose.yml` already maps port **8188** and includes a simple HTTP healthcheck.
-
-## Optional: build flash-attn / xFormers wheels
-
-For maximum control you can prebuild wheels matched to the CUDA/PyTorch used in the image:
-
-```bash
-# Flash-Attention
-docker build -f Dockerfile.flash-attn-wheel -t flashattn-cu129 .
-CID=$(docker create flashattn-cu129)
-mkdir -p wheels/flash-attn && docker cp "$CID":/wheelhouse ./wheels/flash-attn && docker rm "$CID"
-
-# xFormers
-docker build -f Dockerfile.xformers-wheel -t xformers-cu129 .
-CID=$(docker create xformers-cu129)
-mkdir -p wheels/xformers && docker cp "$CID":/wheelhouse ./wheels/xformers && docker rm "$CID"
-```
-
-To use these, either rebuild your ComfyUI image and `pip install` the wheels inside the Dockerfile,
-or exec into a running container and install them:
-
-```bash
-docker compose exec comfyui bash -lc "pip install /workspace/wheels/flash-attn/*.whl /workspace/wheels/xformers/*.whl"
-```
-
-(You can mount `./wheels` into the container by adding another bind-mount in `docker-compose.yml`.)
-
-## Convenience script (optional)
-
-A small helper is provided to streamline common actions:
-
-```bash
-./manage.sh setup     # create folders
-./manage.sh build     # docker compose build
-./manage.sh up        # docker compose up -d
-./manage.sh down      # docker compose down
-./manage.sh logs      # tail ComfyUI logs
-```
-
-> If any of these subcommands are missing on your copy, just use the equivalent `docker compose …` commands above.
-
-## Updating
-
-* Pull the latest repo changes.
-* Rebuild the image: `docker compose build --no-cache`.
-* Restart: `docker compose up -d`.
-
-## Troubleshooting
-
-* **Container can’t see the GPU** → verify NVIDIA drivers, the NVIDIA Container Toolkit, and that Compose is configured to pass the GPU through (see *GPU configuration* above).
-* **Model not found / wrong folder** → confirm the file is under the correct `models/comfyui/**` subfolder name used by your ComfyUI node.
-* **Out-of-memory** → try lower-VRAM workflows, disable high-VRAM nodes, or reduce image sizes/batch counts.
-* **Slow first run** → the image may compile kernels on first use; subsequent runs are faster.
+---
 
 ## License
 
