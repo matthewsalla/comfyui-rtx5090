@@ -70,17 +70,17 @@ main(){
     flash_args+=(--build-arg "FLASH_ATTN_VERSION=${flash_attn_version}")
   fi
 
-  # info "Building flash-attn wheel image"
-  # build_image Dockerfile.flash-attn-wheel flash-attn-builder \
-  #   "$torch_channel" "$torch_version" "$torchvision_version" "$torchaudio_version" \
-  #   "${flash_args[@]}"
+  info "Building flash-attn wheel image"
+  build_image Dockerfile.flash-attn-wheel flash-attn-builder \
+    "$torch_channel" "$torch_version" "$torchvision_version" "$torchaudio_version" \
+    "${flash_args[@]}"
 
-  # info "Building xformers wheel image"
-  # build_image Dockerfile.xformers-wheel xformers-builder \
-  #   "$torch_channel" "$torch_version" "$torchvision_version" "$torchaudio_version" \
-  #   --build-arg "XFORMERS_VERSION=${xformers_version}" \
-  #   --build-arg "XFORMERS_REPO=${xformers_repo}" \
-  #   --build-arg "XFORMERS_REF=${xformers_ref}"
+  info "Building xformers wheel image"
+  build_image Dockerfile.xformers-wheel xformers-builder \
+    "$torch_channel" "$torch_version" "$torchvision_version" "$torchaudio_version" \
+    --build-arg "XFORMERS_VERSION=${xformers_version}" \
+    --build-arg "XFORMERS_REPO=${xformers_repo}" \
+    --build-arg "XFORMERS_REF=${xformers_ref}"
 
   info "Extracting wheels"
   extract_wheel flash-attn-builder "flash_attn*.whl"
