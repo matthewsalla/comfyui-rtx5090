@@ -1,74 +1,76 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+set -euo pipefail
 
-# Current date for version pinning
-CURRENT_DATE=$(date +"%Y-%m-%d")
-COMFYUI_VERSION="comfyui-nightly-${CURRENT_DATE}"
+: "${HOME:=/workspace}"
+: "${COMFYUI_REPO:=https://github.com/comfyanonymous/ComfyUI.git}"
+: "${COMFYUI_BRANCH:=master}"
+: "${COMFYUI_ARGS:=}"
 
-# Set HOME to a writable location
-export HOME=/workspace
-export PIP_CACHE_DIR=/workspace/.cache/pip
+: "${XDG_CACHE_HOME:=/workspace/.cache/xdg}"
+: "${HF_HOME:=/workspace/.cache/hf}"
+: "${TORCH_HOME:=/workspace/.cache/torch}"
+: "${PIP_CACHE_DIR:=/workspace/.cache/pip}"
 
-# Configure git
-git config --global --add safe.directory /workspace/comfyui
-git config --global url."https://github.com/".insteadOf git://github.com/
-git config --global http.timeout 300
+export HOME XDG_CACHE_HOME HF_HOME TORCH_HOME PIP_CACHE_DIR
 
-# Create necessary directories
-mkdir -p /workspace/comfyui/models/checkpoints
-mkdir -p /workspace/comfyui/models/loras
-mkdir -p /workspace/comfyui/models/clip
-mkdir -p /workspace/comfyui/models/clip_vision
-mkdir -p /workspace/comfyui/models/controlnet
-mkdir -p /workspace/comfyui/models/upscale_models
-mkdir -p /workspace/comfyui/models/vae
-mkdir -p /workspace/comfyui/models/embeddings
-mkdir -p /workspace/comfyui/models/unet
-mkdir -p /workspace/comfyui/custom_nodes
-mkdir -p /workspace/.cache/pip
+# Ensure we operate from /workspace even if WORKDIR pointed at a removed path
+cd /workspace
 
-# Check if version file exists
-if [ -f "/workspace/comfyui/.version" ]; then
-  EXISTING_VERSION=$(cat /workspace/comfyui/.version)
-  echo "Current ComfyUI version: $EXISTING_VERSION"
+# Ensure cache dirs only (repo dirs are handled after clone)
+mkdir -p /workspace/.cache/{pip,hf,torch,xdg}
+
+# Git config
+git config --global --add safe.directory /workspace/comfyui || true
+git config --global http.timeout 300 || true
+git config --global url."https://github.com/".insteadOf git://github.com/ || true
+
+# Clone or update ComfyUI
+if [ ! -d /workspace/comfyui/.git ]; then
+  echo "[INFO] Cloning ComfyUI → ${COMFYUI_REPO} (branch: ${COMFYUI_BRANCH})"
+  # If the directory exists but isn't a git repo, it must be empty for clone to succeed.
+  if [ -d /workspace/comfyui ] && [ -n "$(ls -A /workspace/comfyui 2>/dev/null || true)" ]; then
+    echo "[ERROR] /workspace/comfyui exists and is not empty; cannot clone into it."
+    echo "       Move or clear that folder, then restart the container."
+    exit 1
+  fi
+  rm -rf /workspace/comfyui || true
+  git clone --depth=1 --branch "${COMFYUI_BRANCH}" "${COMFYUI_REPO}" /workspace/comfyui
 else
-  EXISTING_VERSION=""
-  echo "No existing version found, will pin to current nightly"
+  echo "[INFO] Updating existing ComfyUI repo"
+  (cd /workspace/comfyui && git fetch --all --prune && git pull --rebase || true)
 fi
 
-# Pin to current nightly if no version exists
-if [ "$EXISTING_VERSION" == "" ]; then
-  cd /workspace/comfyui
-  
-  # Get current commit hash
-  git pull
-  COMMIT_HASH=$(git rev-parse HEAD)
-  
-  # Save version information
-  echo "${COMFYUI_VERSION} (${COMMIT_HASH})" > /workspace/comfyui/.version
-  echo "Pinned ComfyUI to version: ${COMFYUI_VERSION} (${COMMIT_HASH})"
-else
-  echo "Using existing pinned version: $EXISTING_VERSION"
+# After clone/update, ensure ComfyUI working directories exist
+if [ -d /workspace/comfyui ]; then
+  mkdir -p \
+    /workspace/comfyui/models/{checkpoints,clip,clip_vision,controlnet,embeddings,ipadapter,lora,unet,vae,upscale_models} \
+    /workspace/comfyui/{custom_nodes,config,logs,output}
 fi
 
-# Install any additional dependencies
-pip install -r requirements.txt
+# Record version
+if [ -d /workspace/comfyui/.git ]; then
+  COMMIT_HASH="$(cd /workspace/comfyui && git rev-parse HEAD || echo unknown)"
+  date +"comfyui-nightly-%Y-%m-%d (${COMMIT_HASH})" > /workspace/comfyui/.version || true
+fi
 
-# Skip extension installation due to network issues
-echo "Skipping extension installation due to network connectivity issues"
+# Install deps (best-effort)
+if [ -f /workspace/comfyui/requirements.txt ]; then
+  echo "[INFO] Installing ComfyUI requirements"
+  python3 -m pip install --upgrade pip wheel setuptools >/dev/null 2>&1 || true
+  python3 -m pip install -r /workspace/comfyui/requirements.txt || true
+fi
 
-# Create empty directories for extensions to prevent errors
-mkdir -p /workspace/comfyui/custom_nodes/ComfyUI-WD14-Tagger
-mkdir -p /workspace/comfyui/custom_nodes/ComfyUI-SDXL-Turbo
-mkdir -p /workspace/comfyui/custom_nodes/ComfyUI-Impact-Pack
-
-# Start ComfyUI with optimizations for RTX 5090
+# Launch
 cd /workspace/comfyui
-exec python main.py \
+echo "[INFO] Starting ComfyUI on 0.0.0.0:8188"
+# Allow optional extra CLI args supplied via COMFYUI_ARGS env
+if [ -n "${COMFYUI_ARGS}" ]; then
+  # shellcheck disable=SC2086
+  set -- ${COMFYUI_ARGS} "$@"
+fi
+exec python3 main.py \
   --listen 0.0.0.0 \
   --port 8188 \
   --enable-cors-header \
   --cuda-device 0 \
-  --highvram \
-  --force-fp16 \
   "$@"

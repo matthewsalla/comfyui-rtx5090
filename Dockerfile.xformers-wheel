@@ -17,17 +17,31 @@ ENV PATH=/opt/venv/bin:$PATH \
 # Upgrade pip and install build tools
 RUN pip install --upgrade pip wheel setuptools
 
-# Install PyTorch nightly (same version as runtime)
-RUN pip install --index-url https://download.pytorch.org/whl/nightly/cu129 torch torchvision torchaudio
+# Reuse runtime torch channel/version for ABI compatibility
+ARG TORCH_CHANNEL="https://download.pytorch.org/whl/nightly/cu129"
+ARG TORCH_VERSION=""
+ARG TORCHVISION_VERSION=""
+ARG TORCHAUDIO_VERSION=""
+RUN set -eux; \
+    TORCH_SPEC="torch${TORCH_VERSION:+==${TORCH_VERSION}}"; \
+    TORCHVISION_SPEC="torchvision${TORCHVISION_VERSION:+==${TORCHVISION_VERSION}}"; \
+    TORCHAUDIO_SPEC="torchaudio${TORCHAUDIO_VERSION:+==${TORCHAUDIO_VERSION}}"; \
+    pip install --no-cache-dir --index-url "${TORCH_CHANNEL}" "${TORCH_SPEC}"; \
+    pip install --no-cache-dir --index-url "${TORCH_CHANNEL}" "${TORCHVISION_SPEC}" "${TORCHAUDIO_SPEC}"; \
+    pip install einops packaging
 
-# Install required dependencies for xFormers
-RUN pip install einops packaging
-
-# Verify PyTorch version
-RUN python3 -c "import torch; print('PyTorch version:', torch.__version__)"
-
-# Build xformers wheel with PyTorch nightly (force from source)
-RUN pip wheel --no-binary=:all: --no-deps --no-build-isolation --no-cache-dir xformers==0.0.32.dev1073 -w /wheelhouse
+# Build xformers wheel. If XFORMERS_VERSION is empty, fall back to repo/commit build.
+ARG XFORMERS_VERSION=""
+ARG XFORMERS_REPO="https://github.com/facebookresearch/xformers.git"
+ARG XFORMERS_REF="main"
+RUN set -eux; \
+    if [ -n "${XFORMERS_VERSION}" ]; then \
+        pip wheel --no-binary=:all: --no-deps --no-build-isolation --no-cache-dir \
+          xformers=="${XFORMERS_VERSION}" -w /wheelhouse; \
+    else \
+        pip wheel --no-binary=:all: --no-deps --no-build-isolation --no-cache-dir \
+          git+"${XFORMERS_REPO}"@"${XFORMERS_REF}"#egg=xformers -w /wheelhouse; \
+    fi
 
 # List the built wheel
 RUN ls -la /wheelhouse/

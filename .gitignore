@@ -1,6 +1,22 @@
 extensions/
+
+# Runtime workspace and local configuration
+workspace/
+.env*
+!.env.example
+
+# Temporary download directories
+.tmp-downloads/
+.tmp-model-downloads/
+
 # Model files
 models/comfyui/
+*.ckpt
+*.gguf
+*.onnx
+*.pt
+*.pth
+*.safetensors
 
 # Output directories
 outputs/comfyui/*
@@ -12,9 +28,6 @@ wheelhouse/*.whl
 
 # Docker build files
 .dockerignore
-
-# Environment variables
-.env
 
 # Python
 __pycache__/
